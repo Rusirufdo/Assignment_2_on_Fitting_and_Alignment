@@ -1,45 +1,32 @@
-
 import cv2 as cv
 import numpy as np
+import matplotlib.pyplot as plt
+from math import sqrt
+from skimage.feature import blob_log
 
-def log_pyramid_detect(img_bgr, sigma_min=1.2, sigma_max=12.0, num_scales=18, k=np.sqrt(2.0), thr_rel=0.015):
-    img = cv.cvtColor(img_bgr, cv.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-    sigmas = [sigma_min * (k ** i) for i in range(num_scales)]
-    logs = []
-    for s in sigmas:
-        n = int(6*s) | 1
-        g = cv.GaussianBlur(img, (n, n), s)
-        lap = cv.Laplacian(g, cv.CV_32F, ksize=3)
-        # scale normalization (s^2 * |LoG|)
-        logs.append((s, (s*s)*np.abs(lap)))
-    # 3D non-max suppression across scales
-    H, W = img.shape
-    vol = np.stack([L for (_, L) in logs], axis=-1)  # H×W×S
-    max_neigh = cv.dilate(vol, np.ones((3,3,3), np.uint8))
-    peaks = (vol == max_neigh) & (vol > thr_rel * vol.max())
-    ys, xs, zs = np.where(peaks)
-    # radius ≈ sqrt(2) * sigma (LoG theory)
-    circles = [(int(x), int(y), int(np.sqrt(2)*sigmas[z]), float(vol[y,x,z])) for y,x,z in zip(ys,xs,zs)]
-    # non-max suppression in image plane
-    circles.sort(key=lambda c: c[3], reverse=True)
-    keep = []
-    occ = np.zeros((H, W), np.uint8)
-    for x,y,r,_ in circles:
-        y0,y1 = max(0,y-r), min(H,y+r+1)
-        x0,x1 = max(0,x-r), min(W,x+r+1)
-        if occ[y0:y1, x0:x1].sum()==0:
-            keep.append((x,y,r))
-            cv.circle(occ, (x,y), r, 1, -1)
-    return keep, (sigmas[0], sigmas[-1])
 
-if __name__ == "__main__":
-    im = cv.imread("images/the_berry_farms_sunflower_field.jpeg", cv.IMREAD_REDUCED_COLOR_4)
-    circles, sigma_range = log_pyramid_detect(im)
-    out = im.copy()
-    for (x,y,r) in circles[:25]:
-        cv.circle(out, (x,y), r, (0,255,0), 2)
-        cv.circle(out, (x,y), 2, (0,0,255), -1)
-    print("Detected circles:", len(circles))
-    print("Largest circles (top-5 by radius):", sorted(circles, key=lambda c:c[2], reverse=True)[:5])
-    print("σ range used:", sigma_range)
-    cv.imwrite("out/q1_log_circles.png", out)
+im = cv.imread('images/the_berry_farms_sunflower_field.jpeg', cv.IMREAD_REDUCED_COLOR_4)
+gray = cv.cvtColor(im, cv.COLOR_BGR2GRAY)
+
+min_sigma, max_sigma, num_sigma = 2, 40, 20
+blobs = blob_log(gray, min_sigma=min_sigma, max_sigma=max_sigma,
+                 num_sigma=num_sigma, threshold=0.1)
+
+
+blobs[:, 2] = blobs[:, 2] * sqrt(2)
+
+
+fig, ax = plt.subplots()
+ax.imshow(gray, cmap='gray')
+ax.set_axis_off()
+
+for y, x, r in blobs:
+    circ = plt.Circle((x, y), r, color='blue', linewidth=2, fill=False)
+    ax.add_patch(circ)
+
+
+largest = blobs[np.argmax(blobs[:, 2])]
+print(f"Sigma range used: [{min_sigma}, {max_sigma}] with num_sigma={num_sigma}")
+print(f"Largest circle center = ({largest[1]:.1f}, {largest[0]:.1f}), radius = {largest[2]:.2f} px")
+
+plt.show()
