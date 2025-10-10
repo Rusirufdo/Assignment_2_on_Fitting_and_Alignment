@@ -1,1 +1,47 @@
 
+import cv2 as cv
+import numpy as np
+import matplotlib.pyplot as plt
+
+ARCH_PATH = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\arch2.jpg"
+FLAG_PATH = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\flag2.jpg"
+OUT_PATH  = 'q3_flag_on_arch1.png'
+ALPHA = 0.85
+
+arch = cv.imread(ARCH_PATH, cv.IMREAD_COLOR)
+flag = cv.imread(FLAG_PATH, cv.IMREAD_UNCHANGED)
+assert arch is not None and flag is not None, "Check the image paths."
+
+H, W = arch.shape[:2]
+if flag.shape[2] == 4:
+    flag_bgr = flag[:, :, :3]
+    flag_a = flag[:, :, 3] / 255.0
+else:
+    flag_bgr = flag
+    flag_a = np.ones(flag_bgr.shape[:2], dtype=np.float32)
+
+fh, fw = flag_bgr.shape[:2]
+src = np.float32([[0, 0], [fw - 1, 0], [fw - 1, fh - 1], [0, fh - 1]])
+
+plt.figure(figsize=(8, 6))
+plt.title('Click 4 points on the planar surface (TL, TR, BR, BL)')
+plt.imshow(cv.cvtColor(arch, cv.COLOR_BGR2RGB))
+pts = plt.ginput(4, timeout=0)
+plt.close()
+dst = np.float32(pts)
+
+Hmat = cv.getPerspectiveTransform(src, dst)
+warped_flag = cv.warpPerspective(flag_bgr, Hmat, (W, H))
+warped_alpha = cv.warpPerspective((flag_a * 255).astype(np.uint8), Hmat, (W, H)).astype(np.float32) / 255.0
+
+mask = (warped_alpha > 0).astype(np.float32)
+a = np.clip(warped_alpha * ALPHA, 0, 1) * mask
+comp = (warped_flag.astype(np.float32) * a[..., None] + arch.astype(np.float32) * (1 - a[..., None])).astype(np.uint8)
+
+cv.imwrite(OUT_PATH, comp)
+plt.figure(figsize=(8, 6))
+plt.imshow(cv.cvtColor(comp, cv.COLOR_BGR2RGB))
+plt.axis('off')
+plt.tight_layout()
+plt.show()
+print('Saved:', OUT_PATH)
