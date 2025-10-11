@@ -1,47 +1,56 @@
-
-import cv2 as cv
+import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-ARCH_PATH = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\arch2.jpg"
-FLAG_PATH = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\flag2.jpg"
-OUT_PATH  = 'q3_flag_on_arch1.png'
-ALPHA = 0.85
+bg_path = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\wall_1.webp"
+overlay_path = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\flag2.jpg"
+img_bg = cv2.imread(bg_path)
+img_overlay = cv2.imread(overlay_path)
 
-arch = cv.imread(ARCH_PATH, cv.IMREAD_COLOR)
-flag = cv.imread(FLAG_PATH, cv.IMREAD_UNCHANGED)
-assert arch is not None and flag is not None, "Check the image paths."
+if img_bg is None or img_overlay is None:
+    raise FileNotFoundError("Image not found.")
 
-H, W = arch.shape[:2]
-if flag.shape[2] == 4:
-    flag_bgr = flag[:, :, :3]
-    flag_a = flag[:, :, 3] / 255.0
-else:
-    flag_bgr = flag
-    flag_a = np.ones(flag_bgr.shape[:2], dtype=np.float32)
+points_bg = []
 
-fh, fw = flag_bgr.shape[:2]
-src = np.float32([[0, 0], [fw - 1, 0], [fw - 1, fh - 1], [0, fh - 1]])
+def click_event(event, x, y, flags, param):
+    if event == cv2.EVENT_LBUTTONDOWN:
+        points_bg.append([x, y])
+        cv2.circle(temp, (x, y), 5, (0, 0, 255), -1)
+        cv2.imshow("Select 4 points", temp)
+        if len(points_bg) == 4:
+            cv2.destroyAllWindows()
 
-plt.figure(figsize=(8, 6))
-plt.title('Click 4 points on the planar surface (TL, TR, BR, BL)')
-plt.imshow(cv.cvtColor(arch, cv.COLOR_BGR2RGB))
-pts = plt.ginput(4, timeout=0)
-plt.close()
-dst = np.float32(pts)
+temp = img_bg.copy()
+cv2.imshow("Select 4 points", temp)
+cv2.setMouseCallback("Select 4 points", click_event)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
 
-Hmat = cv.getPerspectiveTransform(src, dst)
-warped_flag = cv.warpPerspective(flag_bgr, Hmat, (W, H))
-warped_alpha = cv.warpPerspective((flag_a * 255).astype(np.uint8), Hmat, (W, H)).astype(np.float32) / 255.0
+points_bg = np.float32(points_bg[:4])
+h, w, _ = img_overlay.shape
+points_overlay = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
 
-mask = (warped_alpha > 0).astype(np.float32)
-a = np.clip(warped_alpha * ALPHA, 0, 1) * mask
-comp = (warped_flag.astype(np.float32) * a[..., None] + arch.astype(np.float32) * (1 - a[..., None])).astype(np.uint8)
+# Apply a slight blur to the overlay (flag)
+img_overlay = cv2.GaussianBlur(img_overlay, (3, 3), 0.8)
 
-cv.imwrite(OUT_PATH, comp)
-plt.figure(figsize=(8, 6))
-plt.imshow(cv.cvtColor(comp, cv.COLOR_BGR2RGB))
+H, _ = cv2.findHomography(points_overlay, points_bg)
+warped_overlay = cv2.warpPerspective(img_overlay, H, (img_bg.shape[1], img_bg.shape[0]))
+
+overlay_gray = cv2.cvtColor(warped_overlay, cv2.COLOR_BGR2GRAY)
+_, mask = cv2.threshold(overlay_gray, 1, 255, cv2.THRESH_BINARY)
+mask_inv = cv2.bitwise_not(mask)
+
+bg_part = cv2.bitwise_and(img_bg, img_bg, mask=mask_inv)
+overlay_part = cv2.bitwise_and(warped_overlay, warped_overlay, mask=mask)
+
+result = cv2.add(bg_part, overlay_part)
+
+cv2.imwrite("superimposed_slightblur.jpg", result)
+
+plt.imshow(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
 plt.axis('off')
-plt.tight_layout()
 plt.show()
-print('Saved:', OUT_PATH)
+
+
+
+
