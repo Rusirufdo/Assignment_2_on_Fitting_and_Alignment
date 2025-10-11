@@ -1,0 +1,90 @@
+import cv2 as cv
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import linalg
+
+img1 = cv.imread('img1.ppm')
+img5 = cv.imread('img5.ppm')
+
+img1_gray = cv.cvtColor(img1, cv.COLOR_BGR2GRAY)
+img5_gray = cv.cvtColor(img5, cv.COLOR_BGR2GRAY)
+img1_rgb = cv.cvtColor(img1, cv.COLOR_BGR2RGB)
+img5_rgb = cv.cvtColor(img5, cv.COLOR_BGR2RGB)
+
+sift = cv.SIFT_create()
+keypoints1, descriptors1 = sift.detectAndCompute(img1_gray, None)
+keypoints5, descriptors5 = sift.detectAndCompute(img5_gray, None)
+
+bf = cv.BFMatcher()
+matches = bf.knnMatch(descriptors1, descriptors5, k=2)
+
+good_matches = []
+for m, n in matches:
+    if m.distance < 0.75 * n.distance:
+        good_matches.append(m)
+
+matched_img = cv.drawMatches(img1_rgb, keypoints1, img5_rgb, keypoints5, good_matches, None,
+                             flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+plt.figure(figsize=(12, 6))
+plt.imshow(matched_img)
+plt.title('SIFT Matches')
+plt.axis('off')
+plt.show()
+
+points1 = np.array([keypoints1[m.queryIdx].pt for m in good_matches])
+points5 = np.array([keypoints5[m.trainIdx].pt for m in good_matches])
+
+def calDistance(p1, p2, H):
+    p1_h = np.array([p1[0], p1[1], 1.0])
+    p2_h = np.array([p2[0], p2[1], 1.0])
+    p2_est = H @ p1_h
+    p2_est /= p2_est[2]
+    return np.linalg.norm(p2_h[:2] - p2_est[:2])
+
+def RANSAC(p1, p2, threshold=4.0, iterations=1000):
+    max_inliers = 0
+    best_H = None
+    for _ in range(iterations):
+        idx = np.random.choice(len(p1), 4, replace=False)
+        H, _ = cv.findHomography(p1[idx], p2[idx], 0)
+        if H is None:
+            continue
+        inliers = []
+        for i in range(len(p1)):
+            if calDistance(p1[i], p2[i], H) < threshold:
+                inliers.append(i)
+        if len(inliers) > max_inliers:
+            max_inliers = len(inliers)
+            best_H = H
+    print(f"Best inliers found: {max_inliers} / {len(p1)}")
+    return best_H
+
+H = RANSAC(points1, points5)
+print("Computed Homography Matrix:")
+print(H)
+
+img5_warped = cv.warpPerspective(img1, H, (img5.shape[1], img5.shape[0]))
+_, mask = cv.threshold(cv.cvtColor(img5_warped, cv.COLOR_BGR2GRAY), 1, 1, cv.THRESH_BINARY_INV)
+img5_masked = np.multiply(mask[:, :, np.newaxis], img5)
+stitched = cv.addWeighted(img5_masked, 1, img5_warped, 1, 0)
+
+plt.figure(figsize=(15, 6))
+plt.subplot(131)
+plt.imshow(img1_rgb)
+plt.title("Image 1")
+plt.axis("off")
+
+plt.subplot(132)
+plt.imshow(cv.cvtColor(stitched, cv.COLOR_BGR2RGB))
+plt.title("Stitched Image")
+plt.axis("off")
+
+highlighted = stitched.copy()
+highlighted = cv.circle(highlighted, (500, 150), 150, (0, 0, 255), 5)
+plt.subplot(133)
+plt.imshow(cv.cvtColor(highlighted, cv.COLOR_BGR2RGB))
+plt.title("Highlighted Difference")
+plt.axis("off")
+
+plt.tight_layout()
+plt.show()

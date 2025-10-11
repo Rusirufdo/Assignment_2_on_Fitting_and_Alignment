@@ -1,0 +1,56 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+bg_path = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\wall_1.webp"
+overlay_path = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\flag2.jpg"
+img_bg = cv2.imread(bg_path)
+img_overlay = cv2.imread(overlay_path)
+
+if img_bg is None or img_overlay is None:
+    raise FileNotFoundError("Image not found.")
+
+points_bg = []
+
+def click_event(event, x, y, flags, param):
+    if event == cv2.EVENT_LBUTTONDOWN:
+        points_bg.append([x, y])
+        cv2.circle(temp, (x, y), 5, (0, 0, 255), -1)
+        cv2.imshow("Select 4 points", temp)
+        if len(points_bg) == 4:
+            cv2.destroyAllWindows()
+
+temp = img_bg.copy()
+cv2.imshow("Select 4 points", temp)
+cv2.setMouseCallback("Select 4 points", click_event)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
+points_bg = np.float32(points_bg[:4])
+h, w, _ = img_overlay.shape
+points_overlay = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+
+# Apply a slight blur to the overlay (flag)
+img_overlay = cv2.GaussianBlur(img_overlay, (3, 3), 0.8)
+
+H, _ = cv2.findHomography(points_overlay, points_bg)
+warped_overlay = cv2.warpPerspective(img_overlay, H, (img_bg.shape[1], img_bg.shape[0]))
+
+overlay_gray = cv2.cvtColor(warped_overlay, cv2.COLOR_BGR2GRAY)
+_, mask = cv2.threshold(overlay_gray, 1, 255, cv2.THRESH_BINARY)
+mask_inv = cv2.bitwise_not(mask)
+
+bg_part = cv2.bitwise_and(img_bg, img_bg, mask=mask_inv)
+overlay_part = cv2.bitwise_and(warped_overlay, warped_overlay, mask=mask)
+
+result = cv2.add(bg_part, overlay_part)
+
+cv2.imwrite("superimposed_slightblur.jpg", result)
+
+plt.imshow(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
+plt.axis('off')
+plt.show()
+
+
+
+

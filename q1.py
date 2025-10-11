@@ -1,0 +1,24 @@
+import cv2 as cv
+import numpy as np
+import matplotlib.pyplot as plt
+from math import sqrt
+from skimage.feature import blob_log
+
+im = cv.imread('images/the_berry_farms_sunflower_field.jpeg', cv.IMREAD_REDUCED_COLOR_4)
+gray = cv.cvtColor(im, cv.COLOR_BGR2GRAY)
+
+min_sigma, max_sigma, num_sigma = 2, 40, 20
+blobs = blob_log(gray, min_sigma=min_sigma, max_sigma=max_sigma, num_sigma=num_sigma, threshold=0.1)
+
+sigmas = blobs[:, 2].copy()
+radii = sigmas * sqrt(2)
+
+fig, ax = plt.subplots()
+ax.imshow(gray, cmap='gray')
+ax.set_axis_off()
+for (y, x, r) in zip(blobs[:,0], blobs[:,1], radii):
+    ax.add_patch(plt.Circle((x, y), r, color='blue', linewidth=2, fill=False))
+plt.show()
+
+print(f"Sigma range used: [{min_sigma}, {max_sigma}] with num_sigma={num_sigma}")
+print(f"Maximum standard deviation: {sigmas.max():.2f}")

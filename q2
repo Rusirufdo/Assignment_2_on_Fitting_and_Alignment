@@ -1,0 +1,131 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+rng = np.random.default_rng(0)
+
+N = 100
+r = 10.0
+x0_gt, y0_gt = 2.0, 3.0
+s_circ = r/16.0
+t = rng.uniform(0.0, 2.0*np.pi, N//2)
+n = s_circ * rng.standard_normal(N//2)
+xc = x0_gt + (r + n) * np.cos(t)
+yc = y0_gt + (r + n) * np.sin(t)
+X_circ = np.column_stack([xc, yc])
+
+s_line = 1.0
+m_gt, b_gt = -1.0, 2.0
+x = np.linspace(-12.0, 12.0, N//2)
+y = m_gt * x + b_gt + s_line * rng.standard_normal(N//2)
+X_line = np.column_stack([x, y])
+
+X = np.vstack([X_circ, X_line])
+
+def fit_line_from_two_points(p, q):
+    vx, vy = q[0]-p[0], q[1]-p[1]
+    a, b = -vy, vx
+    nrm = np.hypot(a, b)
+    if nrm == 0: 
+        return None
+    a, b = a/nrm, b/nrm
+    d = a*p[0] + b*p[1]
+    return np.array([a, b, d])
+
+def line_dist(params, pts):
+    a, b, d = params
+    return np.abs(a*pts[:,0] + b*pts[:,1] - d)
+
+def circle_from_three_points(p1, p2, p3):
+    A = np.array([[2*(p2[0]-p1[0]), 2*(p2[1]-p1[1])],
+                  [2*(p3[0]-p1[0]), 2*(p3[1]-p1[1])]])
+    bb = np.array([
+        p2[0]**2 - p1[0]**2 + p2[1]**2 - p1[1]**2,
+        p3[0]**2 - p1[0]**2 + p3[1]**2 - p1[1]**2
+    ])
+    if np.linalg.cond(A) > 1e12:
+        return None
+    c = np.linalg.solve(A, bb)
+    x0, y0 = c[0], c[1]
+    rr = np.hypot(p1[0]-x0, p1[1]-y0)
+    return np.array([x0, y0, rr])
+
+def circle_residuals(params, pts):
+    x0, y0, rr = params
+    return np.abs(np.hypot(pts[:,0]-x0, pts[:,1]-y0) - rr)
+
+def ransac_line(X, iters=400, thr=0.6, min_consensus=25, rng=rng):
+    best_err = np.inf
+    best = {"model":None,"mask":None,"sample":None}
+    n = len(X)
+    for _ in range(iters):
+        i, j = rng.choice(n, 2, replace=False)
+        model = fit_line_from_two_points(X[i], X[j])
+        if model is None:
+            continue
+        d = line_dist(model, X)
+        mask = d <= thr
+        if mask.sum() < min_consensus:
+            continue
+        err = d[mask].mean()
+        if err < best_err:
+            best_err = err
+            best = {"model":model, "mask":mask, "sample":(i,j)}
+    return best
+
+def ransac_circle(X, iters=800, thr=0.8, min_consensus=25, rng=rng):
+    best_err = np.inf
+    best = {"model":None,"mask":None,"sample":None}
+    n = len(X)
+    for _ in range(iters):
+        i, j, k = rng.choice(n, 3, replace=False)
+        model = circle_from_three_points(X[i], X[j], X[k])
+        if model is None:
+            continue
+        r = circle_residuals(model, X)
+        mask = r <= thr
+        if mask.sum() < min_consensus:
+            continue
+        err = r[mask].mean()
+        if err < best_err:
+            best_err = err
+            best = {"model":model, "mask":mask, "sample":(i,j,k)}
+    return best
+
+line_res = ransac_line(X, iters=400, thr=0.6, min_consensus=25)
+remnant = X[~line_res["mask"]] if line_res["mask"] is not None else X
+circ_res = ransac_circle(remnant, iters=800, thr=0.8, min_consensus=25)
+
+fig, ax = plt.subplots(1,1,figsize=(6,6))
+ax.scatter(X[:,0], X[:,1], s=18, c="#666666", label="All points")
+
+if line_res["sample"] is not None:
+    p, q = X[list(line_res["sample"])]
+    ax.scatter([p[0], q[0]],[p[1], q[1]], c="#2ca02c", s=80, marker="x", label="Best sample for line")
+if line_res["mask"] is not None:
+    ax.scatter(X[line_res["mask"],0], X[line_res["mask"],1], s=24, c="#1f77b4", label="Line inliers")
+if line_res["model"] is not None:
+    a,b,d = line_res["model"]
+    xs = np.linspace(X[:,0].min()-2, X[:,0].max()+2, 400)
+    ys = (d - a*xs)/b
+    ax.plot(xs, ys, color="#1f77b4", lw=2, label="RANSAC line")
+
+if circ_res["sample"] is not None:
+    ps = remnant[list(circ_res["sample"])]
+    ax.scatter(ps[:,0], ps[:,1], c="#ff7f0e", s=90, marker="x", label="Best sample for circle")
+if circ_res["mask"] is not None:
+    ax.scatter(remnant[circ_res["mask"],0], remnant[circ_res["mask"],1], s=24, c="#d62728", label="Circle inliers")
+if circ_res["model"] is not None:
+    x0,y0,rr = circ_res["model"]
+    circ = plt.Circle((x0,y0), rr, edgecolor="#d62728", facecolor="none", lw=2, label="RANSAC circle")
+    ax.add_patch(circ)
+
+gt_circ = plt.Circle((x0_gt,y0_gt), r, edgecolor="#2ca02c", facecolor="none", lw=2, label="Ground truth circle")
+ax.add_patch(gt_circ)
+xs = np.linspace(X[:,0].min()-2, X[:,0].max()+2, 400)
+ax.plot(xs, m_gt*xs + b_gt, linestyle="--", color="#9467bd", lw=2, label="Ground truth line")
+
+ax.set_aspect("equal", adjustable="box")
+ax.legend(loc="best", fontsize=9)
+ax.set_title("RANSAC: line first, then circle")
+plt.tight_layout()
+plt.show()
