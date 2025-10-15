@@ -1,131 +1,126 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 
-rng = np.random.default_rng(0)
+np.random.seed(0)
 
 N = 100
-r = 10.00
+half = N//2
+r = 10.0
 x0_gt, y0_gt = 2.0, 3.0
-s_circ = r/16.0
-t = rng.uniform(0.0, 2.0*np.pi, N//2)
-n = s_circ * rng.standard_normal(N//2)
-xc = x0_gt + (r + n) * np.cos(t)
-yc = y0_gt + (r + n) * np.sin(t)
+s_c = r/16.0
+t = np.random.uniform(0, 2*np.pi, half)
+n = s_c*np.random.randn(half)
+xc = x0_gt + (r+n)*np.cos(t)
+yc = y0_gt + (r+n)*np.sin(t)
 X_circ = np.column_stack([xc, yc])
 
-s_line = 1.0
+s_l = 1.0
 m_gt, b_gt = -1.0, 2.0
-x = np.linspace(-12.0, 12.0, N//2)
-y = m_gt * x + b_gt + s_line * rng.standard_normal(N//2)
+x = np.linspace(-12, 12, half)
+y = m_gt*x + b_gt + s_l*np.random.randn(half)
 X_line = np.column_stack([x, y])
 
 X = np.vstack([X_circ, X_line])
 
-def fit_line_from_two_points(p, q):
-    vx, vy = q[0]-p[0], q[1]-p[1]
-    a, b = -vy, vx
-    nrm = np.hypot(a, b)
-    if nrm == 0: 
-        return None
-    a, b = a/nrm, b/nrm
-    d = a*p[0] + b*p[1]
-    return np.array([a, b, d])
-
-def line_dist(params, pts):
-    a, b, d = params
-    return np.abs(a*pts[:,0] + b*pts[:,1] - d)
-
-def circle_from_three_points(p1, p2, p3):
-    A = np.array([[2*(p2[0]-p1[0]), 2*(p2[1]-p1[1])],
-                  [2*(p3[0]-p1[0]), 2*(p3[1]-p1[1])]])
-    bb = np.array([
-        p2[0]**2 - p1[0]**2 + p2[1]**2 - p1[1]**2,
-        p3[0]**2 - p1[0]**2 + p3[1]**2 - p1[1]**2
-    ])
-    if np.linalg.cond(A) > 1e12:
-        return None
-    c = np.linalg.solve(A, bb)
-    x0, y0 = c[0], c[1]
-    rr = np.hypot(p1[0]-x0, p1[1]-y0)
-    return np.array([x0, y0, rr])
-
-def circle_residuals(params, pts):
-    x0, y0, rr = params
-    return np.abs(np.hypot(pts[:,0]-x0, pts[:,1]-y0) - rr)
-
-def ransac_line(X, iters=400, thr=0.6, min_consensus=25, rng=rng):
-    best_err = np.inf
-    best = {"model":None,"mask":None,"sample":None}
-    n = len(X)
-    for _ in range(iters):
-        i, j = rng.choice(n, 2, replace=False)
-        model = fit_line_from_two_points(X[i], X[j])
-        if model is None:
-            continue
-        d = line_dist(model, X)
-        mask = d <= thr
-        if mask.sum() < min_consensus:
-            continue
-        err = d[mask].mean()
-        if err < best_err:
-            best_err = err
-            best = {"model":model, "mask":mask, "sample":(i,j)}
-    return best
-
-def ransac_circle(X, iters=800, thr=0.8, min_consensus=25, rng=rng):
-    best_err = np.inf
-    best = {"model":None,"mask":None,"sample":None}
-    n = len(X)
-    for _ in range(iters):
-        i, j, k = rng.choice(n, 3, replace=False)
-        model = circle_from_three_points(X[i], X[j], X[k])
-        if model is None:
-            continue
-        r = circle_residuals(model, X)
-        mask = r <= thr
-        if mask.sum() < min_consensus:
-            continue
-        err = r[mask].mean()
-        if err < best_err:
-            best_err = err
-            best = {"model":model, "mask":mask, "sample":(i,j,k)}
-    return best
-
-line_res = ransac_line(X, iters=400, thr=0.6, min_consensus=25)
-remnant = X[~line_res["mask"]] if line_res["mask"] is not None else X
-circ_res = ransac_circle(remnant, iters=800, thr=0.8, min_consensus=25)
-
-fig, ax = plt.subplots(1,1,figsize=(6,6))
-ax.scatter(X[:,0], X[:,1], s=18, c="#666666", label="All points")
-
-if line_res["sample"] is not None:
-    p, q = X[list(line_res["sample"])]
-    ax.scatter([p[0], q[0]],[p[1], q[1]], c="#2ca02c", s=80, marker="x", label="Best sample for line")
-if line_res["mask"] is not None:
-    ax.scatter(X[line_res["mask"],0], X[line_res["mask"],1], s=24, c="#1f77b4", label="Line inliers")
-if line_res["model"] is not None:
-    a,b,d = line_res["model"]
-    xs = np.linspace(X[:,0].min()-2, X[:,0].max()+2, 400)
-    ys = (d - a*xs)/b
-    ax.plot(xs, ys, color="#1f77b4", lw=2, label="RANSAC line")
-
-if circ_res["sample"] is not None:
-    ps = remnant[list(circ_res["sample"])]
-    ax.scatter(ps[:,0], ps[:,1], c="#ff7f0e", s=90, marker="x", label="Best sample for circle")
-if circ_res["mask"] is not None:
-    ax.scatter(remnant[circ_res["mask"],0], remnant[circ_res["mask"],1], s=24, c="#d62728", label="Circle inliers")
-if circ_res["model"] is not None:
-    x0,y0,rr = circ_res["model"]
-    circ = plt.Circle((x0,y0), rr, edgecolor="#d62728", facecolor="none", lw=2, label="RANSAC circle")
-    ax.add_patch(circ)
-
-gt_circ = plt.Circle((x0_gt,y0_gt), r, edgecolor="#2ca02c", facecolor="none", lw=2, label="Ground truth circle")
-ax.add_patch(gt_circ)
+fig, ax = plt.subplots(1, 1, figsize=(6,6))
+ax.scatter(X_line[:,0], X_line[:,1], label='Line')
+ax.scatter(X_circ[:,0], X_circ[:,1], label='Circle')
+ax.add_patch(plt.Circle((x0_gt, y0_gt), r, color='g', fill=False, label='Ground truth circle'))
 xs = np.linspace(X[:,0].min()-2, X[:,0].max()+2, 400)
-ax.plot(xs, m_gt*xs + b_gt, linestyle="--", color="#9467bd", lw=2, label="Ground truth line")
+ax.plot(xs, m_gt*xs + b_gt, color='m', label='Ground truth line')
 
-ax.set_aspect("equal", adjustable="box")
-ax.legend(loc="best", fontsize=9)
-ax.set_title("RANSAC: line first, then circle")
+def cons(p): return p[0]**2 + p[1]**2 - 1
+constraint = ({'type':'eq','fun':cons})
+
+def line_tls(w, idx):
+    a,b,d = w
+    e = a*X[idx,0] + b*X[idx,1] - d
+    return np.sum(e*e)
+
+def line_consensus(w, thr):
+    a,b,d = w
+    e = np.abs(a*X[:,0] + b*X[:,1] - d)
+    return e < thr
+
+print('-----------------------------Implement Line Estimation--------------------------------')
+max_it = 100
+thr_l = 1.0
+need_l = int(0.4*N)
+best_err = np.inf
+best_w = None
+best_inl = None
+best_idx = None
+
+for it in range(max_it):
+    idx = np.random.randint(0, N, 2)
+    w0 = np.array([1.0, 1.0, 0.0])
+    res = minimize(line_tls, x0=w0, args=(idx,), tol=1e-6, constraints=constraint)
+    inl = line_consensus(res.x, thr_l)
+    if inl.sum() > need_l:
+        res2 = minimize(line_tls, x0=res.x, args=(np.where(inl)[0],), tol=1e-6, constraints=constraint)
+        if res2.fun < best_err:
+            best_err = res2.fun
+            best_w = res2.x
+            best_inl = inl
+            best_idx = idx
+            print('\nIteration: ', it)
+            print('Line best error: ', best_err)
+            print('Best line indices: ', best_idx)
+            print('Best model for the line: ', best_w)
+            print('Total number of inliers: ', inl.sum())
+
+ax.scatter(X[best_inl,0], X[best_inl,1], color='tab:blue', label='Line inliers')
+ax.scatter(X[best_idx,0], X[best_idx,1], color='y', label='Best samples for Line')
+xs = np.linspace(X[:,0].min()-2, X[:,0].max()+2, 400)
+ys = (-best_w[0]*xs + best_w[2])/best_w[1]
+ax.plot(xs, ys, color='c', label='RANSAC line')
+
+print('------------------------------------Implement Circle Estimation-----------------------')
+print('Number of inliers: ', best_inl.sum())
+rem = X[~best_inl]
+print('Number of remnants: ', len(rem))
+
+def circ_tls(u, idx):
+    x0,y0,R = u
+    x1,y1 = rem[idx].T
+    return np.sum((np.hypot(x1-x0, y1-y0) - R)**2)
+
+def circ_consensus(u, thr):
+    x0,y0,R = u
+    e = np.abs(np.hypot(rem[:,0]-x0, rem[:,1]-y0) - R)
+    return e < thr
+
+thr_c = 1.0
+need_c = 35
+best_c_err = np.inf
+best_c_u = None
+best_c_inl = None
+best_c_idx = None
+
+for it in range(max_it):
+    idx = np.random.randint(0, len(rem), 3)
+    u0 = np.array([0.0, 0.0, 0.0])
+    res = minimize(circ_tls, x0=u0, args=(idx,), tol=1e-6)
+    inl = circ_consensus(res.x, thr_c)
+    if inl.sum() > need_c:
+        res2 = minimize(circ_tls, x0=res.x, args=(np.where(inl)[0],), tol=1e-6)
+        if res2.fun < best_c_err:
+            best_c_err = res2.fun
+            best_c_u = res2.x
+            best_c_inl = inl
+            best_c_idx = idx
+            print('\nIteration: ', it)
+            print('Circle best error: ', best_c_err)
+            print('Best circle indices: ', best_c_idx)
+            print('Best model for circle: ', best_c_u)
+            print('Total number of inliers: ', best_c_inl.sum())
+
+ax.scatter(rem[best_c_inl,0], rem[best_c_inl,1], color='tab:red', label='Circle inliers')
+ax.scatter(rem[best_c_idx,0], rem[best_c_idx,1], color='m', label='Best samples for the Circle')
+ax.add_patch(plt.Circle((best_c_u[0], best_c_u[1]), best_c_u[2], color='c', fill=False, label='RANSAC circle'))
+
+ax.set_aspect('equal', adjustable='box')
+ax.legend(loc='best', fontsize=8)
 plt.tight_layout()
 plt.show()
