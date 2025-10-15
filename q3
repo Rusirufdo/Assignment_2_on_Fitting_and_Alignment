@@ -1,56 +1,126 @@
-import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 
-bg_path = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\wall_1.webp"
-overlay_path = r"C:\Users\Rusiru_fdo\Desktop\cv_new\images\flag2.jpg"
-img_bg = cv2.imread(bg_path)
-img_overlay = cv2.imread(overlay_path)
+np.random.seed(0)
 
-if img_bg is None or img_overlay is None:
-    raise FileNotFoundError("Image not found.")
+N = 100
+half = N//2
+r = 10.0
+x0_gt, y0_gt = 2.0, 3.0
+s_c = r/16.0
+t = np.random.uniform(0, 2*np.pi, half)
+n = s_c*np.random.randn(half)
+xc = x0_gt + (r+n)*np.cos(t)
+yc = y0_gt + (r+n)*np.sin(t)
+X_circ = np.column_stack([xc, yc])
 
-points_bg = []
+s_l = 1.0
+m_gt, b_gt = -1.0, 2.0
+x = np.linspace(-12, 12, half)
+y = m_gt*x + b_gt + s_l*np.random.randn(half)
+X_line = np.column_stack([x, y])
 
-def click_event(event, x, y, flags, param):
-    if event == cv2.EVENT_LBUTTONDOWN:
-        points_bg.append([x, y])
-        cv2.circle(temp, (x, y), 5, (0, 0, 255), -1)
-        cv2.imshow("Select 4 points", temp)
-        if len(points_bg) == 4:
-            cv2.destroyAllWindows()
+X = np.vstack([X_circ, X_line])
 
-temp = img_bg.copy()
-cv2.imshow("Select 4 points", temp)
-cv2.setMouseCallback("Select 4 points", click_event)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+fig, ax = plt.subplots(1, 1, figsize=(6,6))
+ax.scatter(X_line[:,0], X_line[:,1], label='Line')
+ax.scatter(X_circ[:,0], X_circ[:,1], label='Circle')
+ax.add_patch(plt.Circle((x0_gt, y0_gt), r, color='g', fill=False, label='Ground truth circle'))
+xs = np.linspace(X[:,0].min()-2, X[:,0].max()+2, 400)
+ax.plot(xs, m_gt*xs + b_gt, color='m', label='Ground truth line')
 
-points_bg = np.float32(points_bg[:4])
-h, w, _ = img_overlay.shape
-points_overlay = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+def cons(p): return p[0]**2 + p[1]**2 - 1
+constraint = ({'type':'eq','fun':cons})
 
-# Apply a slight blur to the overlay (flag)
-img_overlay = cv2.GaussianBlur(img_overlay, (3, 3), 0.8)
+def line_tls(w, idx):
+    a,b,d = w
+    e = a*X[idx,0] + b*X[idx,1] - d
+    return np.sum(e*e)
 
-H, _ = cv2.findHomography(points_overlay, points_bg)
-warped_overlay = cv2.warpPerspective(img_overlay, H, (img_bg.shape[1], img_bg.shape[0]))
+def line_consensus(w, thr):
+    a,b,d = w
+    e = np.abs(a*X[:,0] + b*X[:,1] - d)
+    return e < thr
 
-overlay_gray = cv2.cvtColor(warped_overlay, cv2.COLOR_BGR2GRAY)
-_, mask = cv2.threshold(overlay_gray, 1, 255, cv2.THRESH_BINARY)
-mask_inv = cv2.bitwise_not(mask)
+print('-----------------------------Implement Line Estimation--------------------------------')
+max_it = 100
+thr_l = 1.0
+need_l = int(0.4*N)
+best_err = np.inf
+best_w = None
+best_inl = None
+best_idx = None
 
-bg_part = cv2.bitwise_and(img_bg, img_bg, mask=mask_inv)
-overlay_part = cv2.bitwise_and(warped_overlay, warped_overlay, mask=mask)
+for it in range(max_it):
+    idx = np.random.randint(0, N, 2)
+    w0 = np.array([1.0, 1.0, 0.0])
+    res = minimize(line_tls, x0=w0, args=(idx,), tol=1e-6, constraints=constraint)
+    inl = line_consensus(res.x, thr_l)
+    if inl.sum() > need_l:
+        res2 = minimize(line_tls, x0=res.x, args=(np.where(inl)[0],), tol=1e-6, constraints=constraint)
+        if res2.fun < best_err:
+            best_err = res2.fun
+            best_w = res2.x
+            best_inl = inl
+            best_idx = idx
+            print('\nIteration: ', it)
+            print('Line best error: ', best_err)
+            print('Best line indices: ', best_idx)
+            print('Best model for the line: ', best_w)
+            print('Total number of inliers: ', inl.sum())
 
-result = cv2.add(bg_part, overlay_part)
+ax.scatter(X[best_inl,0], X[best_inl,1], color='tab:blue', label='Line inliers')
+ax.scatter(X[best_idx,0], X[best_idx,1], color='y', label='Best samples for Line')
+xs = np.linspace(X[:,0].min()-2, X[:,0].max()+2, 400)
+ys = (-best_w[0]*xs + best_w[2])/best_w[1]
+ax.plot(xs, ys, color='c', label='RANSAC line')
 
-cv2.imwrite("superimposed_slightblur.jpg", result)
+print('------------------------------------Implement Circle Estimation-----------------------')
+print('Number of inliers: ', best_inl.sum())
+rem = X[~best_inl]
+print('Number of remnants: ', len(rem))
 
-plt.imshow(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
-plt.axis('off')
+def circ_tls(u, idx):
+    x0,y0,R = u
+    x1,y1 = rem[idx].T
+    return np.sum((np.hypot(x1-x0, y1-y0) - R)**2)
+
+def circ_consensus(u, thr):
+    x0,y0,R = u
+    e = np.abs(np.hypot(rem[:,0]-x0, rem[:,1]-y0) - R)
+    return e < thr
+
+thr_c = 1.0
+need_c = 35
+best_c_err = np.inf
+best_c_u = None
+best_c_inl = None
+best_c_idx = None
+
+for it in range(max_it):
+    idx = np.random.randint(0, len(rem), 3)
+    u0 = np.array([0.0, 0.0, 0.0])
+    res = minimize(circ_tls, x0=u0, args=(idx,), tol=1e-6)
+    inl = circ_consensus(res.x, thr_c)
+    if inl.sum() > need_c:
+        res2 = minimize(circ_tls, x0=res.x, args=(np.where(inl)[0],), tol=1e-6)
+        if res2.fun < best_c_err:
+            best_c_err = res2.fun
+            best_c_u = res2.x
+            best_c_inl = inl
+            best_c_idx = idx
+            print('\nIteration: ', it)
+            print('Circle best error: ', best_c_err)
+            print('Best circle indices: ', best_c_idx)
+            print('Best model for circle: ', best_c_u)
+            print('Total number of inliers: ', best_c_inl.sum())
+
+ax.scatter(rem[best_c_inl,0], rem[best_c_inl,1], color='tab:red', label='Circle inliers')
+ax.scatter(rem[best_c_idx,0], rem[best_c_idx,1], color='m', label='Best samples for the Circle')
+ax.add_patch(plt.Circle((best_c_u[0], best_c_u[1]), best_c_u[2], color='c', fill=False, label='RANSAC circle'))
+
+ax.set_aspect('equal', adjustable='box')
+ax.legend(loc='best', fontsize=8)
+plt.tight_layout()
 plt.show()
-
-
-
-
